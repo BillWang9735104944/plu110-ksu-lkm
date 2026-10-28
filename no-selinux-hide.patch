@@ -1,0 +1,76 @@
+diff --git a/kernel/Kbuild b/kernel/Kbuild
+index 6c92a01..ec8333a 100644
+--- a/kernel/Kbuild
++++ b/kernel/Kbuild
+@@ -53,7 +53,11 @@ kernelsu-objs += supercall/supercall.o
+ 
+ kernelsu-objs += feature/adb_root.o
+ 
++ifeq ($(KSU_NO_SELINUX_HIDE),y)
++ccflags-y += -DCONFIG_KSU_NO_SELINUX_HIDE=1
++else
+ kernelsu-objs += feature/selinux_hide.o
++endif
+ kernelsu-objs += feature/shell_su_adb_only.o
+ 
+ ifdef KBUILD_EXTMOD
+diff --git a/kernel/core/init.c b/kernel/core/init.c
+index 0ca7529..61715bf 100644
+--- a/kernel/core/init.c
++++ b/kernel/core/init.c
+@@ -144,7 +144,9 @@ int __init kernelsu_init(void)
+     ksu_sulog_init();
+     ksu_adb_root_init();
+     ksu_lsm_hook_init();
++#ifndef CONFIG_KSU_NO_SELINUX_HIDE
+     ksu_selinux_hide_init();
++#endif
+     ksu_shell_su_adb_only_init();
+ 
+     ksu_supercalls_init();
+@@ -222,7 +224,9 @@ void __exit kernelsu_exit(void)
+     ksu_allowlist_exit();
+ 
+     ksu_shell_su_adb_only_exit();
++#ifndef CONFIG_KSU_NO_SELINUX_HIDE
+     ksu_selinux_hide_exit();
++#endif
+     ksu_lsm_hook_exit();
+     ksu_adb_root_exit();
+     ksu_sulog_exit();
+diff --git a/kernel/runtime/boot_event.c b/kernel/runtime/boot_event.c
+index 91848e6..d96d4d0 100644
+--- a/kernel/runtime/boot_event.c
++++ b/kernel/runtime/boot_event.c
+@@ -31,7 +31,9 @@ void on_post_fs_data(void)
+     ksu_observer_init();
+     // Sanity check for safe mode only needs early-boot input samples.
+     ksu_stop_input_hook_runtime();
++#ifndef CONFIG_KSU_NO_SELINUX_HIDE
+     ksu_selinux_hide_handle_post_fs_data();
++#endif
+     // retry forced features which failed at second stage
+     ksu_feature_apply_forced();
+ }
+@@ -70,5 +72,7 @@ void on_boot_completed(void)
+     ksu_boot_completed = true;
+     pr_info("on_boot_completed!\n");
+     track_throne(true);
++#ifndef CONFIG_KSU_NO_SELINUX_HIDE
+     ksu_selinux_hide_drop_backup_if_unused();
++#endif
+ }
+diff --git a/kernel/runtime/ksud_integration.c b/kernel/runtime/ksud_integration.c
+index e8c6994..8bb71c2 100644
+--- a/kernel/runtime/ksud_integration.c
++++ b/kernel/runtime/ksud_integration.c
+@@ -161,7 +161,9 @@ void ksu_handle_execveat_ksud(const char *path, struct user_arg_ptr *argv)
+         char buf[16];
+         if (!init_second_stage_executed && check_argv(*argv, 1, "second_stage", buf, sizeof(buf))) {
+             pr_info("/system/bin/init second_stage executed\n");
++#ifndef CONFIG_KSU_NO_SELINUX_HIDE
+             ksu_selinux_hide_handle_second_stage();
++#endif
+             apply_kernelsu_rules();
+             cache_sid();
+             setup_ksu_cred();
