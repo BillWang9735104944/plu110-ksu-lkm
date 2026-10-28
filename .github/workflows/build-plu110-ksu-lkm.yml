@@ -1,11 +1,13 @@
 # Build KernelSU v3.3.1 LKM for OnePlus Turbo 6 (PLU110, android15-6.6)
 #
-# Why: the official prebuilt lkm-aarch64-android15-6.6 hard-imports 12
-# SELinux-internal symbols (ebitmap_*, sidtab_*, mls_*, cond_compute_av,
-# policydb_context_isvalid) that are only exported in newer GKI trees.
-# OnePlus's 6.6.118 kernel has the functions (kallsyms) but not the exports,
-# so insmod fails with "Unknown symbol" x12. All 12 come from the optional
-# feature/selinux_hide.c; this build excludes it via KSU_NO_SELINUX_HIDE.
+# Why: the official prebuilt lkm-aarch64-android15-6.6 (v3.3.1 tag, same ddk
+# image) imports 225 kernel symbols; on PLU110 exactly 12 are "Unknown symbol"
+# in dmesg (verified by insmod). All 12 are referenced by the optional
+# feature/selinux_hide.c; this build excludes it via KSU_NO_SELINUX_HIDE,
+# leaving 213 imports - all of which the prebuilt proved to resolve on PLU110.
+# (OnePlus's 6.6.118 kallsyms is LTO-pruned, so it looks like symtab_search /
+# getenforce etc. are missing; they are actually exported - the module loader
+# is the ground truth.)
 #
 # Pipeline mirrors tiann/KernelSU .github/workflows/ddk-lkm.yml (aarch64 job),
 # pinned to tag v3.3.1 so the module version (30000 + git rev-list count)
@@ -56,13 +58,21 @@ jobs:
         working-directory: kernelsu/kernel
         run: |
           NM=$(command -v llvm-nm || command -v nm)
-          echo "=== undefined symbols ==="
+          echo "=== undefined symbols (expect 213 = 225 prebuilt - 12 from selinux_hide.o) ==="
           $NM -u kernelsu.ko | sort
-          if $NM -u kernelsu.ko | grep -E 'ebitmap_|sidtab_|mls_context_to_sid|mls_compute_context_len|mls_sid_to_context|cond_compute_av|policydb_context_isvalid'; then
-            echo "FAIL: unexported selinux symbols still hard-imported"
+          #
+          # The official prebuilt (same v3.3.1 tag, same ddk image) imported 225 kernel
+          # symbols; on PLU110 exactly 12 of them were "Unknown symbol" in dmesg - all
+          # referenced by feature/selinux_hide.o, which our patch excludes. All other
+          # imports (incl. symtab_search, ebitmap_get_bit/set_bit, policydb_*, avc_ss_reset,
+          # getenforce, ...) resolved fine on the device, so they are exported there.
+          # Note: /proc/kallsyms on this device is LTO-pruned and NOT a reliable export
+          # table - the prebuilt's own symbol table + insmod dmesg is the ground truth.
+          if $NM -u kernelsu.ko | grep -wE 'ebitmap_destroy|ebitmap_cmp|ebitmap_contains|sidtab_context_to_sid|sidtab_search_entry|sidtab_sid2str_get|sidtab_sid2str_put|mls_context_to_sid|mls_compute_context_len|mls_sid_to_context|policydb_context_isvalid|cond_compute_av'; then
+            echo "FAIL: one of the 12 PLU110-unknown symbols is still imported"
             exit 1
           fi
-          echo "PASS: none of the 12 unexported selinux symbols are imported"
+          echo "PASS: none of the 12 PLU110-unknown symbols are imported"
 
       - name: Upload kernelsu.ko
         uses: actions/upload-artifact@v7
