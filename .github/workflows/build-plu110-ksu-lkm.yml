@@ -1,0 +1,71 @@
+# Build KernelSU v3.3.1 LKM for OnePlus Turbo 6 (PLU110, android15-6.6)
+#
+# Why: the official prebuilt lkm-aarch64-android15-6.6 hard-imports 12
+# SELinux-internal symbols (ebitmap_*, sidtab_*, mls_*, cond_compute_av,
+# policydb_context_isvalid) that are only exported in newer GKI trees.
+# OnePlus's 6.6.118 kernel has the functions (kallsyms) but not the exports,
+# so insmod fails with "Unknown symbol" x12. All 12 come from the optional
+# feature/selinux_hide.c; this build excludes it via KSU_NO_SELINUX_HIDE.
+#
+# Pipeline mirrors tiann/KernelSU .github/workflows/ddk-lkm.yml (aarch64 job),
+# pinned to tag v3.3.1 so the module version (30000 + git rev-list count)
+# matches the official KernelSU Manager v3.3.1 APK (version 32680).
+name: build-plu110-ksu-lkm
+
+on:
+  workflow_dispatch:
+  push:
+
+jobs:
+  build:
+    name: Build kernelsu.ko (android15-6.6, selinux_hide off)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:android15-6.6-20260828
+      options: --privileged
+
+    steps:
+      - name: Checkout this repo (patch)
+        uses: actions/checkout@v7
+
+      - name: Checkout KernelSU v3.3.1 (full history for version calc)
+        uses: actions/checkout@v7
+        with:
+          repository: tiann/KernelSU
+          ref: v3.3.1
+          fetch-depth: 0
+          path: kernelsu
+
+      - name: Apply selinux_hide removal patch
+        working-directory: kernelsu
+        run: |
+          git config --global --add safe.directory "$(pwd)"
+          git apply -v ../no-selinux-hide.patch
+          git diff --stat
+
+      - name: Build kernelsu.ko (aarch64)
+        working-directory: kernelsu/kernel
+        run: |
+          set -euo pipefail
+          CONFIG_KSU=m CC=clang KSU_NO_SELINUX_HIDE=y make 2>&1 | tee build.log | tail -n 120
+          echo "=== build log tail done, kernelsu.ko ==="
+          ls -la kernelsu.ko
+          command -v modinfo >/dev/null 2>&1 && modinfo kernelsu.ko || true
+
+      - name: Verify no unexported selinux imports
+        working-directory: kernelsu/kernel
+        run: |
+          NM=$(command -v llvm-nm || command -v nm)
+          echo "=== undefined symbols ==="
+          $NM -u kernelsu.ko | sort
+          if $NM -u kernelsu.ko | grep -E 'ebitmap_|sidtab_|mls_context_to_sid|mls_compute_context_len|mls_sid_to_context|cond_compute_av|policydb_context_isvalid'; then
+            echo "FAIL: unexported selinux symbols still hard-imported"
+            exit 1
+          fi
+          echo "PASS: none of the 12 unexported selinux symbols are imported"
+
+      - name: Upload kernelsu.ko
+        uses: actions/upload-artifact@v7
+        with:
+          name: plu110-ksu-lkm-v3.3.1
+          path: kernelsu/kernel/kernelsu.ko
